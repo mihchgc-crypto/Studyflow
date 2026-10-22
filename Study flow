@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StudyFlow - Plan smarter. Study better.</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700&display=swap" rel="stylesheet">
+<script>
+tailwind.config = { darkMode: 'class', theme: { extend: { fontFamily: { sans: ['Inter', 'sans-serif'], display: ['Plus Jakarta Sans', 'sans-serif'] } } } }
+</script>
+<style>
+{font-family: 'Inter', sans-serif}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-thumb{background:#c4b5fd;border-radius:999px}
+.dark ::-webkit-scrollbar-thumb{background:#4c1d95}
+</style>
+</head>
+<body class="bg-[#fafafb] dark:bg-[#0a0a0f] transition-colors duration-300">
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+// --- Helpers ---
+const uid = () => Math.random().toString(36).slice(2,9);
+const todayISO = () => new Date().toISOString().slice(0,10);
+const daysLeft = (date) => Math.ceil((new Date(date) - new Date()) / (1000606024));
+
+const initialData = {
+tasks: [
+{id:'1', title:'Complete Calculus Chapter 5', subject:'Mathematics', deadline: todayISO(), priority:'high', completed:false},
+{id:'2', title:'Revise Photosynthesis Notes', subject:'Biology', deadline: todayISO(), priority:'medium', completed:false},
+{id:'3', title:'Essay Draft - Modern History', subject:'History', deadline:'2026-10-26', priority:'high', completed:true},
+],
+subjects: [
+{id:'s1', name:'Mathematics', color:'#6366f1', chapters: [{name:'Algebra', done:true},{name:'Calculus', done:false},{name:'Trigonometry', done:false}]},
+{id:'s2', name:'Biology', color:'#06b6d4', chapters: [{name:'Cell Biology', done:true},{name:'Genetics', done:false}]},
+{id:'s3', name:'History', color:'#f59e0b', chapters: [{name:'WWII', done:true},{name:'Cold War', done:false}]},
+],
+exams: [
+{id:'e1', name:'Midterm Mathematics', date:'2026-11-15', syllabus:65},
+{id:'e2', name:'Biology Finals', date:'2026-12-02', syllabus:40},
+],
+notes: [
+{id:'n1', title:'Quantum Basics', subject:'Physics', content:'Superposition & entanglement notes...', date: todayISO()},
+],
+timetable: {
+Mon: [{time:'09:00', subject:'Math'}, {time:'11:00', subject:'Biology'}],
+Tue: [{time:'10:00', subject:'History'}],
+Wed: [{time:'09:00', subject:'Math'}, {time:'14:00', subject:'Physics'}],
+Thu: [{time:'11:00', subject:'Chemistry'}],
+Fri: [{time:'09:00', subject:'Revision'}],
+Sat: [{time:'10:00', subject:'Mock Test'}],
+Sun: [],
+},
+sessions: [ {date: todayISO(), minutes: 45}, {date: todayISO(), minutes: 30} ],
+settings: { dailyGoal: 4, studyMin: 25, breakMin: 5 }
+};
+
+function App(){
+const [tab, setTab] = useState('dashboard');
+const [mobileNav, setMobileNav] = useState(false);
+const [dark, setDark] = useState(localStorage.getItem('sf-dark')==='true');
+const [data, setData] = useState(()=> {
+const s = localStorage.getItem('studyflow-data');
+return s ? JSON.parse(s) : initialData;
+});
+const [newTask, setNewTask] = useState({title:'', subject:'Mathematics', deadline: todayISO(), priority:'medium'});
+const [newExam, setNewExam] = useState({name:'', date:'', syllabus:0});
+const [newNote, setNewNote] = useState({title:'', subject:'General', content:''});
+const [newSubject, setNewSubject] = useState('');
+
+// Pomodoro
+const [timerMode, setTimerMode] = useState('study'); // study | break
+const [timeLeft, setTimeLeft] = useState(data.settings.studyMin60);
+const [running, setRunning] = useState(false);
+const intervalRef = useRef(null);
+
+useEffect(()=> localStorage.setItem('studyflow-data', JSON.stringify(data)), [data]);
+useEffect(()=> {
+localStorage.setItem('sf-dark', dark);
+document.documentElement.classList.toggle('dark', dark);
+}, [dark]);
+useEffect(()=> {
+setTimeLeft(timerMode==='study' ? data.settings.studyMin60 : data.settings.breakMin60);
+}, [data.settings.studyMin, data.settings.breakMin, timerMode]);
+
+useEffect(()=> {
+if(running){
+intervalRef.current = setInterval(()=> {
+setTimeLeft(t=>{
+if(t<=1){
+clearInterval(intervalRef.current);
+setRunning(false);
+// auto switch & add session
+if(timerMode==='study'){
+setData(d=>({...d, sessions:[...d.sessions, {date: todayISO(), minutes: d.settings.studyMin}]}));
+setTimerMode('break');
+} else setTimerMode('study');
+return 0;
+}
+return t-1;
+});
+},1000);
+} else clearInterval(intervalRef.current);
+return ()=> clearInterval(intervalRef.current);
+}, [running, timerMode]);
+
+const todayTasks = data.tasks.filter(t=> t.deadline===todayISO());
+const completedToday = todayTasks.filter(t=>t.completed).length;
+const studyHoursToday = (data.sessions.filter(s=>s.date===todayISO()).reduce((a,b)=>a+b.minutes,0)/60).toFixed(1);
+const dailyProgress = Math.min(100, Math.round((studyHoursToday / data.settings.dailyGoal)100));
+
+const update = (fn) => setData(d=> fn(d));
+
+const NavItem = ({id, icon, label}) => (
+<button onClick={()=>{setTab(id); setMobileNav(false)}} className={w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${tab===id ? 'bg-[#6366f1] text-white shadow-lg shadow-indigo-200 dark:shadow-none' : 'text-zinc-600 dark:text-zinc-400 hover:bg-white dark:hover:bg-zinc-900 hover:shadow-sm'}}>
+<span className="text-lg">{icon}</span> {label}
+</button>
+);
+
+return (
+<div className={dark?'dark':''}>
+<div className="min-h-screen bg-[#fafafb] dark:bg-[#0a0a0f] text-zinc-900 dark:text-zinc-100 flex">
+{/ Sidebar /}
+<aside className={fixed lg:static inset-y-0 left-0 z-40 w-[280px] bg-white dark:bg-[#111114] border-r border-zinc-200 dark:border-zinc-800 flex flex-col transition-transform lg:translate-x-0 ${mobileNav ? 'translate-x-0' : '-translate-x-full'} lg:flex shrink-0}>
+<div className="p-6">
+<div className="flex items-center gap-3">
+<div className="w-9 h-9 rounded-xl bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] grid place-items-center text-white font-bold">◈</div>
+<div>
+<h1 className="font-display font-bold text-[18px] leading-none">StudyFlow</h1>
+<p className="text-xs text-zinc-500">Plan smarter. Study better.</p>
+</div>
+</div>
+</div>
+<nav className="px-3 space-y-1.5 flex-1">
+<NavItem id="dashboard" icon="◧" label="Dashboard" />
+<NavItem id="tasks" icon="✓" label="Tasks" />
+<NavItem id="timetable" icon="▦" label="Timetable" />
+<NavItem id="focus" icon="◷" label="Focus Timer" />
+<NavItem id="subjects" icon="⬢" label="Subjects" />
+<NavItem id="exams" icon="◎" label="Exam Countdown" />
+<NavItem id="notes" icon="✎" label="Notes" />
+<NavItem id="analytics" icon="▭" label="Analytics" />
+<NavItem id="settings" icon="⚙" label="Settings" />
+</nav>
+<div className="p-4 m-3 rounded-2xl bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] text-white">
+<p className="text-sm font-semibold">Daily Goal</p>
+<p className="text-xs opacity-80">{studyHoursToday}h / {data.settings.dailyGoal}h</p>
+<div className="h-2 bg-white/20 rounded-full mt-2 overflow-hidden">
+<div className="h-full bg-white rounded-full transition-all" style={{width: dailyProgress+'%'}}></div>
+</div>
+</div>
+</aside>
+
+{/ Main /}
+<div className="flex-1 min-w-0">
+{/ Topbar /}
+<header className="sticky top-0 z-30 bg-white/80 dark:bg-[#111114]/80 backdrop-blur border-b border-zinc-200 dark:border-zinc-800">
+<div className="flex items-center justify-between px-4 lg:px-8 py-4">
+<div className="flex items-center gap-3">
+<button onClick={()=>setMobileNav(!mobileNav)} className="lg:hidden p-2 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800">☰</button>
+<div>
+<h2 className="font-display font-bold text-xl capitalize">{tab}</h2>
+<p className="text-xs text-zinc-500 hidden sm:block">Welcome back, Alex — let's make today productive.</p>
+</div>
+</div>
+<div className="flex items-center gap-2">
+<button onClick={()=>setDark(!dark)} className="w-10 h-10 rounded-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 grid place-items-center">{dark?'☀':'☾'}</button>
+<img src="https://i.pravatar.cc/100?img=33" className="w-9 h-9 rounded-full object-cover border-2 border-white shadow" />
+</div>
+</div>
+</header>
+
+<main className="p-4 lg:p-8 max-w-[1200px] mx-auto space-y-6">
+
+{/ DASHBOARD /}
+{tab==='dashboard' && (
+<div className="space-y-6 animate-[fadeIn_0.3s]">
+<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+<div className="bg-white dark:bg-[#111114] rounded-[20px] p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm">
+<p className="text-xs font-semibold tracking-widest text-zinc-500">TODAY'S FOCUS</p>
+<p className="text-3xl font-bold mt-2">{completedToday}/{todayTasks.length}</p>
+<p className="text-sm text-zinc-500">Tasks completed</p>
+<div className="h-2 bg-zinc-100 dark:bg-zinc-800 rounded-full mt-4 overflow-hidden"><div className="h-full bg-[#6366f1] rounded-full" style={{width: (todayTasks.length? completedToday/todayTasks.length100:0)+'%'}}></div></div>
+</div>
+<div className="bg-white dark:bg-[#111114] rounded-[20px] p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm">
+<p className="text-xs font-semibold tracking-widest text-zinc-500">STUDY HOURS</p>
+<p className="text-3xl font-bold mt-2">{studyHoursToday}h</p>
+<p className="text-sm text-zinc-500">Goal: {data.settings.dailyGoal}h / day</p>
+<div className="h-2 bg-zinc-100 dark:bg-zinc-800 rounded-full mt-4 overflow-hidden"><div className="h-full bg-[#06b6d4] rounded-full" style={{width: dailyProgress+'%'}}></div></div>
+</div>
+<div className="bg-gradient-to-br from-[#6366f1] to-[#8b5cf6] rounded-[20px] p-5 text-white shadow-lg">
+<p className="text-xs font-semibold tracking-widest opacity-80">UPCOMING EXAM</p>
+{data.exams[0] ? <>
+<p className="text-lg font-bold mt-2">{data.exams[0].name}</p>
+<p className="text-2xl font-bold">{daysLeft(data.exams[0].date)} days left</p>
+<div className="h-2 bg-white/20 rounded-full mt-4 overflow-hidden"><div className="h-full bg-white rounded-full" style={{width: data.exams[0].syllabus+'%'}}></div></div>
+</> : <p className="text-sm opacity-80 mt-2">No exams added</p>}
+</div>
+</div>
+
+<div className="grid grid-cols-1 lg:grid-cols-[1.4fr_0.8fr] gap-6">
+<div className="bg-white dark:bg-[#111114] rounded-[20px] border border-zinc-200 dark:border-zinc-800 p-6 shadow-sm">
+<div className="flex justify-between items-center mb-4"><h3 className="font-semibold">Today's Tasks</h3><button onClick={()=>setTab('tasks')} className="text-sm text-[#6366f1] font-medium">View all →</button></div>
+<div className="space-y-3">
+{todayTasks.length===0 && <p className="text-sm text-zinc-500 py-8 text-center">No tasks for today. Add one!</p>}
+{todayTasks.map(t=>(
+<label key={t.id} className="flex items-center gap-3 p-3 rounded-2xl border border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-900 transition cursor-pointer">
+<input type="checkbox" checked={t.completed} onChange={()=> update(d=>({...d, tasks:d.tasks.map(x=> x.id===t.id? {...x, completed:!x.completed}:x)}))} className="w-5 h-5 accent-[#6366f1] rounded-full" />
+<div className="flex-1 min-w-0"><p className={text-sm font-medium truncate ${t.completed?'line-through text-zinc-400':''}}>{t.title}</p><p className="text-xs text-zinc-500">{t.subject} • {t.priority}</p></div>
+<span className={text-xs px-2 py-1 rounded-full font-medium ${t.priority==='high'?'bg-red-50 text-red-600 dark:bg-red-950':'bg-amber-50 text-amber-600 dark:bg-amber-950'}}>{t.priority}</span>
+</label>
+))}
+</div>
+</div>
+<div className="bg-white dark:bg-[#111114] rounded-[20px] border border-zinc-200 dark:border-zinc-800 p-6 shadow-sm">
+<h3 className="font-semibold mb-4">Weekly Progress</h3>
+<div className="flex items-end gap-2 h-[140px]">
+{['M','T','W','T','F','S','S'].map((d,i)=>{
+const h = [60,80,40,90,70,30,50][i];
+return <div key={i} className="flex-1 flex flex-col items-center gap-2"><div className="w-full bg-gradient-to-t from-[#6366f1] to-[#a78bfa] rounded-t-xl transition-all" style={{height: h+'%'}}></div><span className="text-xs text-zinc-500">{d}</span></div>
+})}
+</div>
+<p className="text-xs text-zinc-500 mt-4 text-center">Avg. {studyHoursToday}h/day this week</p>
+</div>
+</div>
+</div>
+)}
+
+{/ TASKS /}
+{tab==='tasks' && (
+<div className="space-y-4">
+<div className="bg-white dark:bg-[#111114] rounded-[20px] p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm flex flex-wrap gap-3">
+<input placeholder="Task title" value={newTask.title} onChange={e=>setNewTask({...newTask,title:e.target.value})} className="flex-1 min-w-[180px] px-4 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 outline-none focus:ring-2 focus:ring-[#6366f1]/20" />
+<select value={newTask.subject} onChange={e=>setNewTask({...newTask,subject:e.target.value})} className="px-3 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800">
+{data.subjects.map(s=> <option key={s.id}>{s.name}</option>)}
+</select>
+<input type="date" value={newTask.deadline} onChange={e=>setNewTask({...newTask,deadline:e.target.value})} className="px-3 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800" />
+<select value={newTask.priority} onChange={e=>setNewTask({...newTask,priority:e.target.value})} className="px-3 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800">
+<option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
+</select>
+<button onClick={()=>{
+if(!newTask.title.trim()) return;
+update(d=>({...d, tasks:[{id:uid(), ...newTask, completed:false}, ...d.tasks]}));
+setNewTask({...newTask, title:''});
+}} className="px-6 py-2.5 rounded-xl bg-[#6366f1] text-white font-medium hover:bg-[#5558e3] transition shadow">Add Task</button>
+</div>
+<div className="grid gap-3">
+{data.tasks.map(t=>(
+<div key={t.id} className="bg-white dark:bg-[#111114] rounded-2xl p-4 border border-zinc-200 dark:border-zinc-800 flex items-center gap-3 shadow-sm">
+<input type="checkbox" checked={t.completed} onChange={()=> update(d=>({...d, tasks:d.tasks.map(x=> x.id===t.id? {...x, completed:!x.completed}:x)}))} className="w-5 h-5 accent-[#6366f1]" />
+<div className="flex-1">
+<p className={font-medium ${t.completed?'line-through text-zinc-400':''}}>{t.title}</p>
+<p className="text-xs text-zinc-500">{t.subject} • Due {t.deadline} • <span className={t.priority==='high'?'text-red-500':'text-amber-500'}>{t.priority}</span></p>
+</div>
+<button onClick={()=> update(d=>({...d, tasks:d.tasks.filter(x=>x.id!==t.id)}))} className="p-2 rounded-xl hover:bg-red-50 dark:hover:bg-red-950 text-zinc-400 hover:text-red-600">✕</button>
+</div>
+))}
+</div>
+</div>
+)}
+
+{/ TIMETABLE /}
+{tab==='timetable' && (
+<div className="bg-white dark:bg-[#111114] rounded-[20px] border border-zinc-200 dark:border-zinc-800 p-6 shadow-sm overflow-x-auto">
+<h3 className="font-semibold mb-4">Weekly Timetable</h3>
+<div className="grid grid-cols-8 gap-2 min-w-[720px] text-sm">
+<div className="text-zinc-400"></div>
+{Object.keys(data.timetable).map(d=> <div key={d} className="font-semibold text-center py-2 bg-zinc-50 dark:bg-zinc-900 rounded-xl">{d}</div>)}
+{['09:00','11:00','14:00','16:00'].map(time=> (
+<React.Fragment key={time}>
+<div className="text-zinc-500 py-6 text-center">{time}</div>
+{Object.keys(data.timetable).map(day=> {
+const slot = data.timetable[day].find(s=>s.time===time);
+return <div key={day+time} className={rounded-2xl p-3 min-h-[64px] border-2 border-dashed flex items-center justify-center text-center ${slot?'bg-indigo-50 dark:bg-indigo-950/30 border-indigo-200 dark:border-indigo-800 font-medium':'border-zinc-200 dark:border-zinc-800 text-zinc-400'}}>{slot? slot.subject : '+'}</div>
+})}
+</React.Fragment>
+))}
+</div>
+<p className="text-xs text-zinc-500 mt-4">Prototype: timetable is editable via code — drag & drop coming soon.</p>
+</div>
+)}
+
+{/ FOCUS /}
+{tab==='focus' && (
+<div className="max-w-[560px] mx-auto">
+<div className="bg-white dark:bg-[#111114] rounded-[32px] border border-zinc-200 dark:border-zinc-800 p-8 lg:p-10 text-center shadow-sm">
+<div className="inline-flex p-1 bg-zinc-100 dark:bg-zinc-900 rounded-full mb-6">
+<button onClick={()=>{setTimerMode('study'); setRunning(false)}} className={px-5 py-1.5 rounded-full text-sm font-medium transition ${timerMode==='study'?'bg-white dark:bg-zinc-800 shadow': 'text-zinc-500'}}>Study</button>
+<button onClick={()=>{setTimerMode('break'); setRunning(false)}} className={px-5 py-1.5 rounded-full text-sm font-medium transition ${timerMode==='break'?'bg-white dark:bg-zinc-800 shadow': 'text-zinc-500'}}>Break</button>
+</div>
+<div className="w-[240px] h-[240px] mx-auto rounded-full border-[8px] border-zinc-100 dark:border-zinc-800 grid place-items-center relative">
+<div className="absolute inset-2 rounded-full border-4 border-[#6366f1] opacity-20"></div>
+<div>
+<p className="text-6xl font-display font-bold tracking-tight">{String(Math.floor(timeLeft/60)).padStart(2,'0')}:{String(timeLeft%60).padStart(2,'0')}</p>
+<p className="text-sm text-zinc-500 mt-1 capitalize">{timerMode} Session</p>
+</div>
+</div>
+<div className="flex justify-center gap-3 mt-8">
+<button onClick={()=>setRunning(!running)} className="px-8 py-3 rounded-full bg-[#6366f1] text-white font-semibold shadow-lg shadow-indigo-200 hover:bg-[#5558e3] transition">{running?'Pause':'Start'}</button>
+<button onClick={()=>{setRunning(false); setTimeLeft(timerMode==='study'? data.settings.studyMin60 : data.settings.breakMin60)}} className="px-8 py-3 rounded-full bg-zinc-100 dark:bg-zinc-900 font-semibold border border-zinc-200 dark:border-zinc-800">Reset</button>
+</div>
+<p className="text-xs text-zinc-500 mt-6">Completed sessions today: {data.sessions.filter(s=>s.date===todayISO()).length} • Total {studyHoursToday}h</p>
+</div>
+</div>
+)}
+
+{/ SUBJECTS /}
+{tab==='subjects' && (
+<div className="space-y-4">
+<div className="flex gap-3">
+<input placeholder="New subject name" value={newSubject} onChange={e=>setNewSubject(e.target.value)} className="flex-1 px-4 py-2.5 rounded-xl bg-white dark:bg-[#111114] border border-zinc-200 dark:border-zinc-800 outline-none" />
+<button onClick={()=>{ if(!newSubject.trim())return; update(d=>({...d, subjects:[...d.subjects, {id:uid(), name:newSubject, color:'#6366f1', chapters:[]}]})); setNewSubject('')}} className="px-6 py-2.5 rounded-xl bg-[#6366f1] text-white font-medium">Add</button>
+</div>
+<div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+{data.subjects.map(sub=> {
+const prog = sub.chapters.length? Math.round(sub.chapters.filter(c=>c.done).length/sub.chapters.length100):0;
+return (
+<div key={sub.id} className="bg-white dark:bg-[#111114] rounded-[20px] p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm">
+<div className="flex justify-between items-start">
+<div className="flex items-center gap-3"><span className="w-3 h-3 rounded-full" style={{background:sub.color}}></span><h4 className="font-semibold">{sub.name}</h4></div>
+<button onClick={()=> update(d=>({...d, subjects:d.subjects.filter(s=>s.id!==sub.id)}))} className="text-zinc-400 hover:text-red-500">✕</button>
+</div>
+<div className="h-2 bg-zinc-100 dark:bg-zinc-800 rounded-full mt-4 overflow-hidden"><div className="h-full rounded-full" style={{width:prog+'%', background:sub.color}}></div></div>
+<p className="text-xs text-zinc-500 mt-1">{prog}% • {sub.chapters.filter(c=>c.done).length}/{sub.chapters.length} chapters</p>
+<div className="mt-4 space-y-2">
+{sub.chapters.map((c,i)=>(
+<label key={i} className="flex items-center gap-2 text-sm p-2 rounded-xl hover:bg-zinc-50 dark:hover:bg-zinc-900 cursor-pointer">
+<input type="checkbox" checked={c.done} onChange={()=> update(d=>({...d, subjects:d.subjects.map(s=> s.id===sub.id? {...s, chapters:s.chapters.map((x,idx)=> idx===i? {...x,done:!x.done}:x)}:s)}))} className="accent-[#6366f1]" /> {c.name}
+</label>
+))}
+<button onClick={()=>{
+const name = prompt('Chapter name?');
+if(!name) return;
+update(d=>({...d, subjects:d.subjects.map(s=> s.id===sub.id? {...s, chapters:[...s.chapters, {name, done:false}]}:s)}))
+}} className="text-sm text-[#6366f1] font-medium">+ Add chapter</button>
+</div>
+</div>
+)
+})}
+</div>
+</div>
+)}
+
+{/ EXAMS /}
+{tab==='exams' && (
+<div className="space-y-4">
+<div className="bg-white dark:bg-[#111114] rounded-[20px] p-5 border border-zinc-200 dark:border-zinc-800 shadow-sm flex flex-wrap gap-3">
+<input placeholder="Exam name" value={newExam.name} onChange={e=>setNewExam({...newExam,name:e.target.value})} className="flex-1 min-w-[160px] px-4 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800" />
+<input type="date" value={newExam.date} onChange={e=>setNewExam({...newExam,date:e.target.value})} className="px-3 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800" />
+<input type="number" placeholder="Syllabus %" value={newExam.syllabus} onChange={e=>setNewExam({...newExam,syllabus:Number(e.target.value)})} className="w-32 px-3 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800" />
+<button onClick={()=>{ if(!newExam.name || !newExam.date) return; update(d=>({...d, exams:[...d.exams, {id:uid(), ...newExam}]})); setNewExam({name:'',date:'',syllabus:0})}} className="px-6 py-2.5 rounded-xl bg-[#6366f1] text-white font-medium">Add Exam</button>
+</div>
+<div className="grid md:grid-cols-2 gap-4">
+{data.exams.map(ex=> (
+<div key={ex.id} className="bg-white dark:bg-[#111114] rounded-[20px] p-6 border border-zinc-200 dark:border-zinc-800 shadow-sm">
+<div className="flex justify-between">
+<h4 className="font-semibold">{ex.name
